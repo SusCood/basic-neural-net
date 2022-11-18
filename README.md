@@ -9,6 +9,10 @@ To train the network yourself, download the MNIST/EMNIST datasets from the origi
 ### mlp_sigmoid_emnist.py
 The program to train and test networks. First, make sure the required dataset is downloaded and placed in the correct folder. Execute directly to randomly initialise a new network (change parameters like neurone counts in the Network() initialisation) and begin training/testing, or *drag and drop* an **npz** file (saved network) onto this script to train/test with the saved network.
 
+![MNIST network evolution 1](./examples/mnist_93acc_3mb.gif)
+
+![MNIST network evolution 2](./examples/mnist__84acc_2mb.gif)
+
 For faster training, disable drawing the first layer's weights with `draw_l1=False`, or disable drawing entirely with `draw=False` in the Network() call (the pygame window will still open), since drawing takes ~0.1s for even a (784, 24, 16, 10) network. The trained network will also be autosaved once training finishes or you close the pygame window while training; disable this with `save=False`.
 
 I'll make a parallelised version sometime that will hopefully work better on more complex datasets, like EMNIST letters!
@@ -18,6 +22,8 @@ I'll make a parallelised version sometime that will hopefully work better on mor
 Uses a saved network to guess a drawn number in real time. Drag and drop an **npz** file to use it for guessing. Note that at present, networks trained on the original MNIST seem to perform the best; this may be due to image preprocessing differences with EMNIST, so I will try to fix that later. Plus, letters are magnitudes more complex than numbers...
 
 LMB for drawing, RMB for erasing, mouse wheel to change "brush" width, and R to reset board.
+
+![number identifier program working](./examples/python_1668805489.gif)
 
 
 ### graphing scripts
