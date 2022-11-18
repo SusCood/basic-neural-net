@@ -15,6 +15,8 @@ The program to train and test networks. First, make sure the required dataset is
 
 For faster training, disable drawing the first layer's weights with `draw_l1=False`, or disable drawing entirely with `draw=False` in the Network() call (the pygame window will still open), since drawing takes ~0.1s for even a (784, 24, 16, 10) network. The trained network will also be autosaved once training finishes or you close the pygame window while training; disable this with `save=False`.
 
+Also, if profiling is enabled (by uncommenting the profile_func() call, for e.g.), a **prof** file will be created, which you can visualise with `snakeviz` to analyse performance.
+
 I'll make a parallelised version sometime that will hopefully work better on more complex datasets, like EMNIST letters!
 
 
