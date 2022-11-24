@@ -217,7 +217,7 @@ class Network:
 				# iterate from last to 2nd layer
 				for layer_i in range(self.LAYER_NUM - 1, 0, -1):
 					if layer_i != self.LAYER_NUM - 1:
-						# multiply old dcdz with transposed weights of next layer (making them represent FORWARD weights of this layer)
+						# multiply next layer dC/dz with transposed weights of next layer (making them represent FORWARD weights of this layer)
 						dC_by_dAs = np.matmul(self.neurone_weights[layer_i + 1].transpose(), dC_by_dZs)
 
 					# this layer's dC/dZ will persist till next iteration and be used as the next_layer_dC_by_dZ for dC/dA calculation
@@ -382,7 +382,7 @@ if __name__ == "__main__":
 	RNG_STD_DEV = 2
 	icon = pygame.image.load("stuff\\bigbrain.png")
 
-	net = Network((argv[1] if len(argv) > 1 else (PIXELS, 24, 16, len(datasets[CURRENT_DATASET].output_map))), draw=True, save=True, batch_size=200, draw_l1=False)
+	net = Network((argv[1] if len(argv) > 1 else (PIXELS, 24, 16, len(datasets[CURRENT_DATASET].output_map))), draw=False, save=False, batch_size=150, draw_l1=False)
 	#net = Network("3 89.0 9489.npz", draw=True, save=False, batch_size=500, draw_l1=True)
 
 	#try:

@@ -24,6 +24,8 @@ from queue import Empty as QEmpty
 
 # DEBUG TODOS
 # - make a smaller version of the process communication part that keeps messing up, and see what makes it work
+# - one possible solution is saving del_weight info from each process and loading in main process
+# - problem seems to be with both of the queues; the pipe connection is broken after the 1st put-get pair
 
 class DatasetInfo:
 	'''glorified dictionary'''
@@ -421,7 +423,7 @@ def train_subprocess(queues):
 				neurone_biases,
 				img_indices,
 				sub_batch_size,
-			) = init_data_q.get()
+			) = queues[0].get()
 			# no timeout needed, as the subprocess will wait either way until it gets init data, and processes should be killed from main process automatically
 			
 			neurone_actns = [np.zeros(neurone_weights[1].shape[1])] + [np.zeros(layer_weights.shape[0]) for layer_weights in neurone_weights[1:]]

@@ -17,9 +17,11 @@ For faster training, disable drawing the first layer's weights with `draw_l1=Fal
 
 Also, if profiling is enabled (by uncommenting the profile_func() call, for e.g.), a **prof** file will be created, which you can visualise with `snakeviz` to analyse performance.
 
-**mlp_sigmoid_emnist_classless.py:** alternate version that does away with the Neurone class and instead uses lists, leading to a **3x** speedup over the original. Despite the speedup, it's not the main version as it (1) is less readable, (2) possibly has some inaccuracy that slows down training. I'll bring over some optimisations from this to the main ver later and try to debug (2).
 
-**mlp_sigmoid_emnist_classless_mp.py:** FAILURE! Attempt at parallelisation of the classless ver with `multiprocessing`, which keeps giving some cryptic error. Only reason it's here is that by all accounts the code should work, since I've used it successfully in the Mandelbrot program... I'll maybe debug this later.
+**mlp_sigmoid_emnist_classless.py:** alternate version that does away with the Neurone class and instead uses lists, leading to a **2-3x** speedup over the original. Despite the speedup, it's not the main version due to less readability and not enough testing yet.
+
+**mlp_sigmoid_emnist_classless_mp.py:** FAILURE! Attempt at parallelisation of the classless ver with `multiprocessing`, which keeps giving some cryptic error. Only reason it's here is that by all accounts the code should work, since I've used it successfully in the Mandelbrot program... I'll debug this later, maybe.
+
 
 
 ### number_identifier_mnist.py

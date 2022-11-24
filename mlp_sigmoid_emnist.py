@@ -256,17 +256,16 @@ class Network:
 				for layer_i in range(self.LAYER_NUM - 1, 0, -1):
 					prev_activations = np.array([prev_neurone.activation for prev_neurone in self.neurones[layer_i - 1]])
 					if layer_i != self.LAYER_NUM - 1:
-						next_dels = np.array([next_neurone.delC_by_delZ for next_neurone in self.neurones[layer_i + 1]])
+						next_delC_by_delZs = np.array([next_neurone.delC_by_delZ for next_neurone in self.neurones[layer_i + 1]])
+						# layer would normally be layer_i + 1 since next layer's weights are needed, but indexing of weights_list started from 2 so -2
+						current_delC_by_delAs = np.matmul(weights_list[layer_i - 1].transpose(), next_delC_by_delZs)
 
 					for current_neurone_i, current_neurone in enumerate(self.neurones[layer_i]):
 						if layer_i == self.LAYER_NUM - 1:
 							# can directly calc delC/delA at last layer: 2(A - e)
 							current_neurone.delC_by_delA = 2 * (current_neurone.activation - (1 if current_neurone.label == label else 0))
 						else:
-							# if not last layer, will need to add up next layer's delC/delAs
-							# splicing vertically gets forward neurones
-							next_weights = weights_list[layer_i - 1][:,current_neurone_i]
-							current_neurone.delC_by_delA = np.sum(next_weights * next_dels)
+							current_neurone.delC_by_delA = current_delC_by_delAs[current_neurone_i]
 
 						current_neurone.delC_by_delZ = current_neurone.delA_by_delZ * current_neurone.delC_by_delA
 
