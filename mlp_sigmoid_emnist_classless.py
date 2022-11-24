@@ -12,29 +12,8 @@ pygame.init()
 from cProfile import Profile
 from pstats import Stats, SortKey
 
-# TODOS
-# - graph the avg percent correct over time in the data file
-# - ^do this for many different settings, multiple lines on same graph! see what the best combination of neurones and BATCH_SIZE is
-# - make ReLU work
-# - get rid of neurone class for performance? and other optimisations
-# - add a learning accelerator variable when adding derivative, maybe even make it proportional to % somehow
-#
-# - PARALLELISATION!!!
-# add a new class, maybe NetworkCalculator, or a new function to take care of the processing part
-# before each batch, each process receives (gets from put, or some other way) the FULL weights and biases state of the network (new func for this)
-# NetworkCalculators apply this to their own copies, then get their task lists from main process and start calculation
-# (like mandelbrot, but you're receiving indices FOR indices; see if you can pull out just the elements from the indices as a list)
-# after calcing, the results (delweights and biases) are putted into queue, getted in main process and applied
-# processes never exit until training is done
-# NOTE: if getting img indices is too hard, can take the easy way of data_index=-1
-# NOTE: parallelisation might be able to help with extreme batch sizes like IMG_NUM, if it's effective (yes it might overfit)
-
-# TRAINING OBSERVATIONS
-# {MNIST} (784, 24, 16, 10) at 200 BATCH_SIZE seems to be the quickest at convergence? (784, 32, 16, 10) is also good
-# low neurones/BATCH_SIZE (100-) usually converges quickly, but may sometimes not proceed beyond 90%?
-# ^can still reach 90s through tons of batches (similar training times), but maybe less room for growth afterwards.
-# ^could use smaller BATCH_SIZE for initial training and then increase BATCH_SIZE
-# {EMNIST datasets} digits and emnist_mnist don't seem to work as well as OG MNIST with number_recogniser.py, and the letters datasets are HARD to train on
+# DEBUG TODOS
+# - could try the same training img on the same network on normal mlp.py and mlp_classless.py, to see if there are any differences in deltas to prevent accuracy errors
 
 class DatasetInfo:
 	'''glorified dictionary'''
@@ -86,21 +65,42 @@ def profile_func(func, *args):
 	stats.dump_stats(filename=net.get_filename(".prof"))
 
 
+def get_img(data_index=-1, use_test=False):
+		'''returns a random image's 8bit data and its label from dataset, or image+label at specified index if data_index != -1'''
+		if data_index == -1:
+			data_index = randint(0, (T_IMG_NUM if use_test else IMG_NUM) - 1)
+
+		img_offset = 16 + PIXELS * data_index
+		label_offset = 8 + data_index
+
+		img = np.frombuffer(getbytes(img_offset, PIXELS, use_test=use_test), dtype=np.uint8)
+		# for some reason, EMNIST data needs to be transposed, while the original MNIST data does not
+		if CURRENT_DATASET != "mnist":
+			img.shape = HEIGHT, WIDTH
+			img = img.transpose().flatten()
+		return img, (t_label_data if use_test else label_data)[label_offset]
+
+
 class Network:
 	def __init__(self, neurones, draw = False, save = False, batch_size = 100, draw_l1 = True):
+		self.neurone_biases, self.neurone_weights = [None], [None]
 		if isinstance(neurones, tuple):
 			self.LAYER_NUM = len(neurones) 	# 4
 			self.NEURONE_NUM = neurones 	# (784,32,16,10)
-			
-			self.neurones = []
-			for layer_i in range(self.LAYER_NUM):
-				# last layer will be output
-				prev_layer_neurones = 0 if layer_i == 0 else self.NEURONE_NUM[layer_i-1]
-				current_neurone_list = [Neurone(layer_i, neurone_i, prev_layer_neurones, layer_i == self.LAYER_NUM-1) for neurone_i in range(self.NEURONE_NUM[layer_i])]
-				self.neurones.append(current_neurone_list)
+
+			for layer_i in range(1, self.LAYER_NUM):
+				# randomise weights and biases for all neurones
+				self.neurone_biases.append(get_ran_array(self.NEURONE_NUM[layer_i]))
+				# neurone_weights = list of LAYER_NUM ndarrays, each having dimensions of current_layer_neurones x previous_layer_neurones (rows x columns)
+				self.neurone_weights.append(get_ran_array( (self.NEURONE_NUM[layer_i], self.NEURONE_NUM[layer_i - 1]) ))
 		else:
 			# if neurones is a string, load with neurones as filename instead
 			self.load(neurones)
+
+		#self.labels = range(neurones[-1]); will be using output neurone indices instead
+		self.neurone_actns = [np.zeros(layer_neurone_num) for layer_neurone_num in self.NEURONE_NUM]
+		self.neurone_dC_by_dAs, self.neurone_dA_by_dZs, self.neurone_dC_by_dZs = ([None] + [np.zeros(layer_neurone_num) for layer_neurone_num in self.NEURONE_NUM[1:]],) * 3
+		# THINK OF REMOVING FIRST 2
 
 		self.BATCH_SIZE = batch_size
 		self.DRAW = draw
@@ -151,7 +151,7 @@ class Network:
 
 	def get_weight_matrix(self, layer_i):
 		'''creates a 2d array of width prev_neurone_num and height current_neurone_num; represents all weights leading to each neurone in current_layer'''
-		return np.array([current_layer_neurone.weights for current_layer_neurone in self.neurones[layer_i]])
+		return self.neurone_weights[layer_i]
 
 	def shuffle_images(self):
 		'''reset counter and reshuffle list if run out of data, and repeat until all the batches are exhausted'''
@@ -163,7 +163,7 @@ class Network:
 		return f"n-{','.join(str(num) for num in net.NEURONE_NUM)} d-{CURRENT_DATASET} p-{net.percent} b-{self.BATCH_SIZE} {randint(0,100000)}{extension}"
 
 	def create_empty_weights_biases(self):
-		'''for layers from the 2nd onward, make a list of 2d weight matrices leading to that layer, and 1d bias matrices of that layer, to hold changes in weights and biases'''
+		'''for layers from the 2nd onward, make a list of 2d weight matrices leading to that layer, and 1d bias matrices of that layer'''
 		# initialised w/ 1 None to hold nonexistent weights for the first layer; makes indexing easier
 		del_weights, del_biases = [None], [None]
 		for layer_i in range(1, self.LAYER_NUM):
@@ -171,63 +171,20 @@ class Network:
 			del_biases.append(np.zeros(self.NEURONE_NUM[layer_i]))
 		return del_weights, del_biases
 
-	def get_img(self, data_index=-1, use_test=False):
-		'''returns a random image's 8bit data and its label from dataset, or image+label at specified index if data_index != -1'''
-		if data_index == -1:
-			data_index = randint(0, (T_IMG_NUM if use_test else IMG_NUM) - 1)
-
-		img_offset = 16 + PIXELS * data_index
-		label_offset = 8 + data_index
-
-		img = np.frombuffer(getbytes(img_offset, PIXELS, use_test=use_test), dtype=np.uint8)
-		# for some reason, EMNIST data needs to be transposed, while the original MNIST data does not
-		if CURRENT_DATASET != "mnist":
-			img.shape = HEIGHT, WIDTH
-			img = img.transpose().flatten()
-		return img, (t_label_data if use_test else label_data)[label_offset]
-
-	def calc_cost(self, one_img_data, label, return_weights=False):
+	def calc_cost(self, one_img_data, label):
 		'''calculates cost. cost = sigmoid(weights_matrix x prev_activations_vector + bias_vector)'''
-		# remember numpy matrices are displayed in the same was as a calc: list of rows, not columns, so can easily put weights
-		# no need to reshape 1D activations array into 2D column matrix for matrix math
 		if len(one_img_data) != self.NEURONE_NUM[0]: raise Exception("input dont match bruh")
-
-		# TODO: numpify wherever you can later
-		# normalising 8-bit int pixel data into floats
-		norm_img_data = one_img_data/255
-		for i, input_neurone in enumerate(self.neurones[0]):
-			input_neurone.activation = norm_img_data[i]
-
-		# by using weights precollected in calc_cost, might get some speedup from not having to recollect weights in train()?
-		if return_weights: weights_list = []
+		self.neurone_actns[0] = one_img_data/255
 
 		for layer_i in range(1, self.LAYER_NUM):
-			# collect all previous layer neurone activations, weights, and biases as float-type ndarrays, and sum together
-			# prev_activations will be a 1d array of length prev_neurone_num; current_biases of length current_neurone_num
-			prev_activations = np.array([prev_neurone.activation for prev_neurone in self.neurones[layer_i - 1]])
-			current_biases = np.array([current_neurone.bias for current_neurone in self.neurones[layer_i]])
+			current_zs = np.matmul(self.neurone_weights[layer_i], self.neurone_actns[layer_i - 1]) + self.neurone_biases[layer_i]
+			self.neurone_actns[layer_i] = self.activation_func(current_zs)
+			self.neurone_dA_by_dZs[layer_i] = self.activation_derivative(current_zs)
+		
+		costs = self.neurone_actns[-1]**2
+		costs[label] = (self.neurone_actns[-1][label] - 1)**2
 
-			weights = self.get_weight_matrix(layer_i)
-			# for train(), only FORWARD weights from 2ND layer onward are required (to calculate 2nd+ layer's delC/delAs). must index with layer_i-2
-			# 3rd layer's backward weights = 2nd layer's forward weights
-			if return_weights and layer_i >= 2: weights_list.append(weights)
-
-			# 1d array of length current_neurone_num
-			current_zs = np.matmul(weights, prev_activations) + current_biases
-			current_activations = self.activation_func(current_zs)
-			current_delA_by_delZs = self.activation_derivative(current_zs)
-
-			for current_neurone_i, current_neurone in enumerate(self.neurones[layer_i]):
-				# log activations and derivatives for each neurone to help in training
-				current_neurone.activation = current_activations[current_neurone_i]
-				current_neurone.delA_by_delZ = current_delA_by_delZs[current_neurone_i]
-
-		cost = 0
-		for output_neurone in self.neurones[-1]:
-			# sum together (output_activation - expected_activation)^2 for all output neurones
-			cost += (output_neurone.activation - 1)**2 if label == output_neurone.label else output_neurone.activation**2
-
-		return (cost, current_activations.argmax()) + ((weights_list,) if return_weights else ())
+		return np.sum(costs), self.neurone_actns[-1].argmax()
 
 
 	def train(self, num_of_batches):
@@ -245,44 +202,39 @@ class Network:
 
 			for batch_image in range(self.BATCH_SIZE):
 				pg_check_quit(self)
-				img, label = self.get_img(self.img_indices[self.img_list_index])
-				cost, max_actn_i, weights_list = self.calc_cost(img, label, return_weights=True)
+				img, label = get_img(self.img_indices[self.img_list_index])
+				cost, max_actn_i = self.calc_cost(img, label)
 
 				total_cost += cost
-				current_correct = 1 if self.neurones[-1][max_actn_i].label == label else 0
+				# using index of highest activation neurone as the label itself
+				current_correct = int(max_actn_i == label)
 				correct += current_correct
+
+				# can directly calc delC/delA at last layer: 2(A - e) (= 2A if not_label, 2A - 2)
+				dC_by_dAs = 2 * self.neurone_actns[-1]
+				dC_by_dAs[label] -= 2
 
 				# iterate from last to 2nd layer
 				for layer_i in range(self.LAYER_NUM - 1, 0, -1):
-					prev_activations = np.array([prev_neurone.activation for prev_neurone in self.neurones[layer_i - 1]])
 					if layer_i != self.LAYER_NUM - 1:
-						next_dels = np.array([next_neurone.delC_by_delZ for next_neurone in self.neurones[layer_i + 1]])
+						# multiply old dcdz with transposed weights of next layer (making them represent FORWARD weights of this layer)
+						dC_by_dAs = np.matmul(self.neurone_weights[layer_i + 1].transpose(), dC_by_dZs)
 
-					for current_neurone_i, current_neurone in enumerate(self.neurones[layer_i]):
-						if layer_i == self.LAYER_NUM - 1:
-							# can directly calc delC/delA at last layer: 2(A - e)
-							current_neurone.delC_by_delA = 2 * (current_neurone.activation - (1 if current_neurone.label == label else 0))
-						else:
-							# if not last layer, will need to add up next layer's delC/delAs
-							# splicing vertically gets forward neurones
-							next_weights = weights_list[layer_i - 1][:,current_neurone_i]
-							current_neurone.delC_by_delA = np.sum(next_weights * next_dels)
-
-						current_neurone.delC_by_delZ = current_neurone.delA_by_delZ * current_neurone.delC_by_delA
-
-						del_weights[layer_i][current_neurone_i] += prev_activations * current_neurone.delC_by_delZ
-						del_biases[layer_i][current_neurone_i] += current_neurone.delC_by_delZ
+					# this layer's dC/dZ will persist till next iteration and be used as the next_layer_dC_by_dZ for dC/dA calculation
+					dC_by_dZs = self.neurone_dA_by_dZs[layer_i] * dC_by_dAs
+					del_biases[layer_i] += dC_by_dZs
+					for current_neurone_i in range(self.NEURONE_NUM[layer_i]):
+						del_weights[layer_i][current_neurone_i] += self.neurone_actns[layer_i - 1] * dC_by_dZs[current_neurone_i]
 
 				self.img_list_index += 1
 
 			for layer_i in range(1, self.LAYER_NUM):
-				# to get average of derivatives, unaffected by BATCH_Size			
+				# to get average of derivatives, unaffected by BATCH_SIZE			
 				del_weights[layer_i] /= self.BATCH_SIZE
 				del_biases[layer_i] /= self.BATCH_SIZE
 
-				for current_neurone_i, current_neurone in enumerate(self.neurones[layer_i]):
-					current_neurone.weights -= del_weights[layer_i][current_neurone_i]
-					current_neurone.bias -= del_biases[layer_i][current_neurone_i]
+				self.neurone_weights[layer_i] -= del_weights[layer_i]
+				self.neurone_biases[layer_i] -= del_biases[layer_i]
 
 			if self.DRAW or batch_i == num_of_batches - 1:
 				# draw with last used image; does take a lot of time tho
@@ -294,6 +246,7 @@ class Network:
 
 
 	def draw(self, img, label, correct_output, network_changing=True):
+		# NEED TO FIXXXXXXXXXX!
 		if network_changing: self.pg_scr.fill(self.PG_BG_COLOUR)
 		self.pg_circle_layer.fill((255, 255, 255, 0))
 
@@ -314,7 +267,7 @@ class Network:
 
 			if network_changing and layer_i != 0 and (self.DRAW_LAYER_1 or layer_i != 1):
 				for current_neurone_i, current_coords in enumerate(current_neurone_coords_list):
-					current_weights = self.neurones[layer_i][current_neurone_i].weights
+					current_weights = self.neurone_weights[layer_i][current_neurone_i]
 					# map [-inf, inf] weights to [0, 100] colour val
 					line_colour_vals = 100/(1 + e**(-0.55 * abs(current_weights)))
 					for prev_neurone_i, prev_coords in enumerate(prev_neurone_coords_list):
@@ -325,14 +278,14 @@ class Network:
 
 			for current_neurone_i, current_coords in enumerate(current_neurone_coords_list):
 				if layer_i != 0:
-					current_bias = self.neurones[layer_i][current_neurone_i].bias
+					current_bias = self.neurone_biases[layer_i][current_neurone_i]
 					circle_colour = (255, 80, 80, 255) if current_bias < 0 else (80, 255, 80, 255)
 					bias_width = round(5 * abs(current_bias)**(1/3))
 					pygame.draw.circle(self.pg_circle_layer, circle_colour, current_coords, self.PG_CIRCLE_W + bias_width)
 
 				#circle_colour = 0, 0, round(self.neurones[layer_i][current_neurone_i].activation * 255), 255
-				self.pg_colour.hsla = 240, 100, self.neurones[layer_i][current_neurone_i].activation * 100, 100
-				pygame.draw.circle(self.pg_circle_layer, self.pg_colour, current_coords, (self.PG_CIRCLE_W + bias_width) if (layer_i == self.LAYER_NUM-1 and self.neurones[layer_i][current_neurone_i].label == label) else self.PG_CIRCLE_W)
+				self.pg_colour.hsla = 240, 100, self.neurone_actns[layer_i][current_neurone_i] * 100, 100
+				pygame.draw.circle(self.pg_circle_layer, self.pg_colour, current_coords, (self.PG_CIRCLE_W + bias_width) if (layer_i == self.LAYER_NUM-1 and current_neurone_i == label) else self.PG_CIRCLE_W)
 
 			prev_neurone_coords_list = current_neurone_coords_list
 			#pygame.display.flip()
@@ -343,14 +296,8 @@ class Network:
 
 	def save(self, only_pg_screen=False):
 		if not only_pg_screen:
-			weights = []
-			biases = []
-			for layer_i in range(1, self.LAYER_NUM):
-				weights.append(self.get_weight_matrix(layer_i))
-				biases.append(np.array([current_neurone.bias for current_neurone in self.neurones[layer_i]]))
-
-			# number of layers after 1st layer is used to determine how to read file
-			np.savez(self.get_filename(""), *(weights+biases))
+			# npz data format: layer1_weights, ..., layerN_weights, layer1_biases, ..., layerN_biases
+			np.savez(self.get_filename(""), *(self.neurone_weights[1:] + self.neurone_biases[1:]))
 
 		pygame.image.save(self.pg_scr, self.get_filename(".png"))
 
@@ -360,42 +307,31 @@ class Network:
 			layers = len(data)//2
 			self.LAYER_NUM = layers + 1
 			self.NEURONE_NUM = [PIXELS] * self.LAYER_NUM
-			self.neurones = [[Neurone(0, input_neurone_i, 0) for input_neurone_i in range(PIXELS)]]
 			
-			for layer_i_m1 in range(layers):
-				layer_i = layer_i_m1 + 1
-				# yes, i probably should label the arrays when saving them instead of relying on weird default naming; might fix this later
-				current_weights = data[f"arr_{layer_i_m1}"]
+			for layer_i_minus1 in range(layers):
+				# might change naming system to not rely on arr_n naming, but that'd require converting my old dataset files
+				self.NEURONE_NUM[layer_i_minus1 + 1] = data[f"arr_{layer_i_minus1}"].shape[0]
 
-				self.NEURONE_NUM[layer_i] = current_weights.shape[0]
-				# initialise neurones but with 0s as the weights and biases
-				self.neurones.append([Neurone(layer_i, neurone_i, self.NEURONE_NUM[layer_i-1], layer_i == self.LAYER_NUM-1, 0, 0) for neurone_i in range(self.NEURONE_NUM[layer_i])])
-
-				for current_neurone_i, current_neurone_weights in enumerate(current_weights):
-					self.neurones[layer_i][current_neurone_i].weights = current_neurone_weights
-
-				layer_i_m1 += layers
-				current_biases = data[f"arr_{layer_i_m1}"]
-				for current_neurone_i, current_neurone_bias in enumerate(current_biases):
-					self.neurones[layer_i][current_neurone_i].bias = current_neurone_bias
+				self.neurone_weights.append(data[f"arr_{layer_i_minus1}"])
+				self.neurone_biases.append(data[f"arr_{layer_i_minus1 + layers}"])
 
 
 	def test(self, test_num, framerate=0):
 		total_correct = 0
 		clock = pygame.time.Clock()
+		print(f"{test_num} tests being run...")
 
 		for test_i in range(test_num):
 			start_t = perf_counter()
 			pg_check_quit(self)
 
-			img, label = self.get_img(data_index= -1 if test_num != T_IMG_NUM else test_i, use_test=True)
-
+			img, label = get_img(data_index= -1 if test_num != T_IMG_NUM else test_i, use_test=True)
 			cost, max_actn_i = self.calc_cost(img, label)
-
-			current_correct = 1 if self.neurones[-1][max_actn_i].label == label else 0
+			current_correct = int(max_actn_i == label)
 			total_correct += current_correct
 
-			print(f"Test {test_i}: cost {round(cost, 4)}, time {round(perf_counter() - start_t, 8)}")
+			# commenting this out since there'll be a ton of prints
+			#print(f"Test {test_i}: cost {round(cost, 4)}, time {round(perf_counter() - start_t, 8)}")
 			# draw() with network_changing draws entire screen w/ weights and all; network_changing off only updates important parts
 			if self.DRAW or test_i == test_num - 1: self.draw(img, label, current_correct, network_changing = test_i==0)
 			#self.save(True)
@@ -404,28 +340,6 @@ class Network:
 		self.percent = round(total_correct/test_num * 100, 2)
 		print(f"{total_correct}/{test_num} correct ({self.percent}%)")
 		#self.save(True)
-
-
-class Neurone:
-	# if i forego a Neurone class and instead just have ndarrays all over the place controlled by indices, might lead to ANOTHER speedup?
-	# this is much more readable tho
-	def __init__(self, layer, index, prev_layer_neurones, is_output=False, bias=None, weights=None):
-		self.activation = None
-
-		# input neurones do not need any other info
-		if layer != 0:
-			self.bias = get_ran_array() if bias is None else bias
-			# initialise all the weights LEADING to it from previous layer
-			self.weights = get_ran_array(prev_layer_neurones) if weights is None else weights
-
-			# good thing i explicitly defined labels beforehand...
-			if is_output:
-				# letters dataset has the aforementioned mapping problem
-				self.label = index + 1 if CURRENT_DATASET == "letters" else index
-
-			self.delC_by_delA = 0
-			# z = w * a + b; A = sigmoid(z)
-			self.delA_by_delZ = 0
 
 
 class Label:
@@ -468,15 +382,15 @@ if __name__ == "__main__":
 	RNG_STD_DEV = 2
 	icon = pygame.image.load("stuff\\bigbrain.png")
 
-	net = Network((argv[1] if len(argv) > 1 else (PIXELS, 24, 16, len(datasets[CURRENT_DATASET].output_map))), draw=True, save=True, batch_size=100, draw_l1=True)
+	net = Network((argv[1] if len(argv) > 1 else (PIXELS, 24, 16, len(datasets[CURRENT_DATASET].output_map))), draw=True, save=True, batch_size=200, draw_l1=False)
 	#net = Network("3 89.0 9489.npz", draw=True, save=False, batch_size=500, draw_l1=True)
 
-	try:
-		#profile_func(net.train, 5000)
-		net.train(10000)
-		net.test(T_IMG_NUM)
-	except Exception as e:
-		print(e)
+	#try:
+	#profile_func(net.train, 5000)
+	net.train(1000)
+	net.test(T_IMG_NUM)
+	#except Exception as e:
+	#	print(e)
 
 	if net.SAVE: net.save()
 
